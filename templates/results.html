@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ 'Preview' if mode == 'preview' else 'Import' }} — WordPress Blog Importer</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<main>
+  <header>
+    <h1>{{ 'Preview' if mode == 'preview' else 'Importing' }}</h1>
+    <p class="subtitle">
+      <strong>Site:</strong> <code>{{ site }}</code> &nbsp;•&nbsp;
+      <strong>Folder:</strong> <code>{{ folder }}</code> &nbsp;•&nbsp;
+      <strong>SEO plugin:</strong> <code>{{ seo_plugin }}</code>
+    </p>
+    <p class="auth">{{ auth_message }}</p>
+    <p><a href="{{ url_for('index', folder=folder) }}">&larr; Back to form</a></p>
+  </header>
+
+  {% if mode == 'preview' %}
+    <section>
+      <h2>{{ posts|length }} post(s) to import</h2>
+      <table class="results">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Filename</th>
+            <th>Title</th>
+            <th>Slug</th>
+            <th>Meta description</th>
+            <th>Category</th>
+            <th>Date</th>
+            <th>Status</th>
+            <th>Ledger</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in posts %}
+            <tr>
+              <td>{{ loop.index }}</td>
+              <td><code>{{ p.filename }}</code></td>
+              <td>{{ p.title }}</td>
+              <td><code>{{ p.slug }}</code></td>
+              <td class="meta-desc">{{ p.meta_description }}</td>
+              <td>{{ p.category or '—' }}</td>
+              <td>{{ p.post_date_local }}</td>
+              <td>{{ p.status }}</td>
+              <td>
+                {% if p.override_post_id %}
+                  <span class="warn">existing id {{ p.override_post_id }}</span>
+                {% else %}
+                  <span class="ok">new</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="hint">
+        Looks right? Click <strong>Back to form</strong>, then <strong>Import now</strong>.
+        Want to edit the metadata? Click <strong>Generate manifest.csv template</strong> on the form,
+        edit the file in Excel/Sheets, save it back into the folder, and re-preview.
+      </p>
+    </section>
+  {% else %}
+    <section>
+      <h2>Import progress</h2>
+      <div id="status"></div>
+      <table class="results">
+        <thead>
+          <tr><th>#</th><th>Filename</th><th>Status</th><th>Post ID</th><th>Message</th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <p id="summary" class="hint"></p>
+    </section>
+  {% endif %}
+</main>
+
+{% if mode == 'import' %}
+<script>
+const rows = document.getElementById('rows');
+const statusBox = document.getElementById('status');
+const summary = document.getElementById('summary');
+let counter = 0, ok = 0, skip = 0, fail = 0;
+
+const es = new EventSource("{{ url_for('import_stream') }}");
+es.onmessage = (e) => {
+  const data = JSON.parse(e.data);
+  if (data.event === 'status') {
+    const p = document.createElement('p');
+    p.className = 'log';
+    p.textContent = data.message;
+    statusBox.appendChild(p);
+  } else if (data.event === 'result') {
+    counter++;
+    const r = data.result;
+    if (r.status === 'OK') ok++;
+    else if (r.status === 'SKIP') skip++;
+    else fail++;
+    const tr = document.createElement('tr');
+    tr.className = 'row-' + r.status.toLowerCase();
+    tr.innerHTML = `
+      <td>${counter}</td>
+      <td><code>${r.filename}</code></td>
+      <td>${r.status}</td>
+      <td>${r.post_id ? `<a href="${r.edit_url}" target="_blank">${r.post_id}</a>` : '—'}</td>
+      <td>${r.message || ''}</td>
+    `;
+    rows.appendChild(tr);
+    summary.textContent = `Progress: ${ok} OK • ${skip} skipped • ${fail} failed`;
+  } else if (data.event === 'done') {
+    es.close();
+    summary.textContent += ' — done.';
+  } else if (data.event === 'error') {
+    es.close();
+    summary.textContent = 'Error: ' + (data.message || 'unknown');
+  }
+};
+es.onerror = () => {
+  summary.textContent += ' (connection closed)';
+  es.close();
+};
+</script>
+{% endif %}
+</body>
+</html>

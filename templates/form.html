@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>WordPress Blog Importer</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<main>
+  <header>
+    <h1>WordPress Blog Importer</h1>
+    <p class="subtitle">Import a folder of <code>.docx</code> / <code>.md</code> blog posts to any WordPress site as drafts.</p>
+  </header>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <ul class="flash">
+        {% for cat, m in messages %}
+          <li class="flash-{{ cat }}">{{ m }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  {% endwith %}
+
+  <form action="{{ url_for('preview') }}" method="post" id="importer-form">
+    <section>
+      <h2>1. WordPress site</h2>
+      <label>
+        <span>Website URL</span>
+        <input type="text" name="website" required placeholder="https://www.example.com"
+               value="{{ defaults.get('website', '') }}">
+      </label>
+      <label>
+        <span>REST API path</span>
+        <input type="text" name="rest_path" value="{{ defaults.get('rest_path', '/wp-json/wp/v2') }}">
+      </label>
+      <label>
+        <span>Username</span>
+        <input type="text" name="username" required value="{{ defaults.get('username', '') }}">
+      </label>
+      <label>
+        <span>Application Password</span>
+        <input type="password" name="app_password" required placeholder="xxxx xxxx xxxx xxxx xxxx xxxx">
+        <small>Generate in WP Admin → Users → Profile → Application Passwords. Never stored on disk.</small>
+      </label>
+    </section>
+
+    <section>
+      <h2>2. Content folder</h2>
+      <label>
+        <span>Folder location (on this computer)</span>
+        <div class="folder-picker">
+          <button type="button" id="pick-folder-btn" class="primary picker-btn">📁 Browse folder…</button>
+          <span id="folder-display" class="folder-display {% if defaults.get('folder') %}has-value{% endif %}">
+            {{- defaults.get('folder') or '(no folder selected)' -}}
+          </span>
+        </div>
+        <input type="hidden" name="folder" id="folder" required value="{{ defaults.get('folder', '') }}">
+        <small>Click <strong>Browse folder…</strong> to pick the folder with your <code>.docx</code> / <code>.md</code> files (and optional <code>manifest.csv</code>). A Finder window will open.</small>
+      </label>
+      <button type="button" id="load-settings-btn" class="secondary">Load settings from this folder</button>
+    </section>
+
+    <section>
+      <h2>3. Scheduling</h2>
+      <div class="row">
+        <label>
+          <span>Start date</span>
+          <input type="date" name="start_date" value="{{ defaults.get('start_date') or today }}">
+        </label>
+        <label>
+          <span>Time of day</span>
+          <input type="time" name="time_of_day" value="{{ defaults.get('time_of_day', '09:00') }}">
+        </label>
+        <label>
+          <span>Timezone offset (hours from UTC)</span>
+          <input type="number" name="timezone_offset" step="0.5" value="{{ defaults.get('timezone_offset', '10') }}">
+        </label>
+      </div>
+      <div class="row">
+        <label>
+          <span>Date direction</span>
+          <select name="direction">
+            <option value="backward" {% if defaults.get('direction', 'backward') == 'backward' %}selected{% endif %}>Backward (start → oldest)</option>
+            <option value="forward"  {% if defaults.get('direction') == 'forward' %}selected{% endif %}>Forward (start → newest)</option>
+          </select>
+        </label>
+        <label>
+          <span>Days between posts</span>
+          <input type="number" name="days_between" min="1" value="{{ defaults.get('days_between', '1') }}">
+        </label>
+        <label>
+          <span>Default status</span>
+          <select name="status">
+            <option value="draft"   {% if defaults.get('status', 'draft') == 'draft' %}selected{% endif %}>Draft</option>
+            <option value="publish" {% if defaults.get('status') == 'publish' %}selected{% endif %}>Publish</option>
+            <option value="future"  {% if defaults.get('status') == 'future' %}selected{% endif %}>Scheduled (future)</option>
+          </select>
+        </label>
+      </div>
+      <label class="checkbox">
+        <input type="checkbox" name="overwrite" value="1">
+        <span>Re-import all (overwrite existing posts in <code>.imported.json</code>)</span>
+      </label>
+    </section>
+
+    <div class="actions">
+      <button type="submit" formaction="{{ url_for('preview') }}" class="primary">Preview (dry-run)</button>
+      <button type="submit" formaction="{{ url_for('import_now') }}" class="primary go">Import now</button>
+      <button type="submit" formaction="{{ url_for('download_manifest') }}" class="secondary">Generate manifest.csv template</button>
+    </div>
+  </form>
+
+  <footer>
+    <p>v1 • <a href="https://github.com" target="_blank" rel="noopener">README</a> in <code>~/wp-blog-importer/README.md</code></p>
+  </footer>
+</main>
+
+<script>
+const pickBtn = document.getElementById('pick-folder-btn');
+const folderDisplay = document.getElementById('folder-display');
+const folderInput = document.getElementById('folder');
+
+pickBtn.addEventListener('click', async () => {
+  pickBtn.disabled = true;
+  const originalLabel = pickBtn.textContent;
+  pickBtn.textContent = 'Waiting for picker…';
+  try {
+    const r = await fetch('{{ url_for("pick_folder") }}', { method: 'POST' });
+    const data = await r.json();
+    if (data.ok) {
+      folderInput.value = data.path;
+      folderDisplay.textContent = data.path;
+      folderDisplay.classList.add('has-value');
+    } else if (data.cancelled) {
+      // user closed the picker — keep previous value
+    } else {
+      alert('Could not open folder picker: ' + (data.error || 'unknown error'));
+    }
+  } catch (e) {
+    alert('Network error: ' + e);
+  } finally {
+    pickBtn.disabled = false;
+    pickBtn.textContent = originalLabel;
+  }
+});
+
+document.getElementById('load-settings-btn').addEventListener('click', async () => {
+  const folder = folderInput.value.trim();
+  if (!folder) { alert('Pick a folder first.'); return; }
+  const fd = new FormData();
+  fd.append('folder', folder);
+  const r = await fetch('{{ url_for("load_settings_for_folder") }}', { method: 'POST', body: fd });
+  const data = await r.json();
+  if (!data.ok) { alert('Could not load settings: ' + data.error); return; }
+  const s = data.settings || {};
+  for (const [k, v] of Object.entries(s)) {
+    const el = document.querySelector(`[name="${k}"]`);
+    if (el && v !== '' && v !== null && v !== undefined) el.value = v;
+  }
+});
+</script>
+</body>
+</html>

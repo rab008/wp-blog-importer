@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+
+# wp-blog-importer runtime artifacts (per-folder, never check in)
+.imported.json
+.wpimport.json
+manifest.csv
