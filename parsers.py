@@ -9,10 +9,33 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+PKG_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 
 
 def w(tag: str) -> str:
     return f"{{{W_NS}}}{tag}"
+
+
+def r_attr(tag: str) -> str:
+    return f"{{{R_NS}}}{tag}"
+
+
+def _load_docx_rels(z: zipfile.ZipFile) -> dict[str, str]:
+    rels_path = "word/_rels/document.xml.rels"
+    if rels_path not in z.namelist():
+        return {}
+    try:
+        root = ET.fromstring(z.read(rels_path))
+    except ET.ParseError:
+        return {}
+    out: dict[str, str] = {}
+    for rel in root.findall(f"{{{PKG_NS}}}Relationship"):
+        rid = rel.get("Id")
+        target = rel.get("Target")
+        if rid and target:
+            out[rid] = target
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -22,6 +45,7 @@ def w(tag: str) -> str:
 def parse_docx(path: Path) -> tuple[str, str]:
     with zipfile.ZipFile(path) as z:
         xml = z.read("word/document.xml")
+        rels = _load_docx_rels(z)
     root = ET.fromstring(xml)
     body = root.find(w("body"))
 
@@ -38,7 +62,7 @@ def parse_docx(path: Path) -> tuple[str, str]:
     for child in body:
         if child.tag == w("tbl"):
             close_list()
-            parts.append(_render_docx_table(child))
+            parts.append(_render_docx_table(child, rels))
             continue
         if child.tag != w("p"):
             continue
@@ -53,7 +77,7 @@ def parse_docx(path: Path) -> tuple[str, str]:
                 style = pStyle.get(w("val"), "")
             is_list = pPr.find(w("numPr")) is not None
 
-        text_html = _render_docx_runs(p)
+        text_html = _render_docx_runs(p, rels)
         text_plain = re.sub(r"<[^>]+>", "", text_html).strip()
 
         if not text_plain:
@@ -91,7 +115,7 @@ def parse_docx(path: Path) -> tuple[str, str]:
     return title, html_body
 
 
-def _render_docx_table(tbl) -> str:
+def _render_docx_table(tbl, rels: dict[str, str]) -> str:
     rows = tbl.findall(w("tr"))
     if not rows:
         return ""
@@ -99,7 +123,7 @@ def _render_docx_table(tbl) -> str:
     def cell_html(tc) -> str:
         cell_parts = []
         for p in tc.findall(w("p")):
-            inner = _render_docx_runs(p)
+            inner = _render_docx_runs(p, rels)
             if re.sub(r"<[^>]+>", "", inner).strip():
                 cell_parts.append(inner)
         return "<br>".join(cell_parts)
@@ -119,12 +143,23 @@ def _render_docx_table(tbl) -> str:
     return "".join(out)
 
 
-def _render_docx_runs(paragraph) -> str:
+def _render_docx_runs(paragraph, rels: dict[str, str]) -> str:
     pieces = []
     for child in paragraph:
         if child.tag == w("hyperlink"):
-            inner = "".join(_render_docx_run(r) for r in child.findall(w("r")))
-            if inner:
+            inner = "".join(_render_docx_run(rn) for rn in child.findall(w("r")))
+            if not inner:
+                continue
+            rid = child.get(r_attr("id"))
+            anchor = child.get(w("anchor"))
+            href = rels.get(rid) if rid else None
+            if href and anchor:
+                href = f"{href}#{anchor}"
+            elif not href and anchor:
+                href = f"#{anchor}"
+            if href:
+                pieces.append(f'<a href="{html.escape(href, quote=True)}">{inner}</a>')
+            else:
                 pieces.append(inner)
         elif child.tag == w("r"):
             pieces.append(_render_docx_run(child))

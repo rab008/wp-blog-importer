@@ -1,0 +1,8 @@
+{
+  "default": "Uncategorized",
+  "rules": {
+    "Appliance Repair": ["dishwasher", "refrigerator", "oven", "washer", "dryer"],
+    "Plumbing":         ["faucet", "drain", "leak", "pipe", "toilet"],
+    "HVAC":             ["furnace", "air conditioner", "thermostat", "heating"]
+  }
+}

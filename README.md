@@ -120,6 +120,23 @@ If auto-derived defaults are good enough (title from H1, slug = kebab-case, meta
 
 Each successful import is logged in `.imported.json` inside the folder. Re-running against the same folder *skips* already-imported files. If you edit the manifest and want those edits to actually update the WordPress posts, tick **Re-import all (overwrite)** on the form before clicking Import — the app will then PATCH the existing post id instead of creating a new draft.
 
+### categories.json (optional — auto-assign category by content)
+
+Drop a `categories.json` in the content folder to auto-assign a category to any post whose `manifest.csv` `category` cell is empty. The importer scores each post's title + body against your keyword lists and picks the highest-scoring category. If no keyword matches, it falls back to `default` (when set). Missing categories are created on the WordPress side at import time.
+
+```json
+{
+  "default": "Uncategorized",
+  "rules": {
+    "Appliance Repair": ["dishwasher", "refrigerator", "oven", "washer", "dryer"],
+    "Plumbing":         ["faucet", "drain", "leak", "pipe", "toilet"],
+    "HVAC":             ["furnace", "air conditioner", "thermostat", "heating"]
+  }
+}
+```
+
+Precedence: `manifest.csv` category cell > `categories.json` detection > no category. A starter file lives at `~/wp-blog-importer/categories.example.json`.
+
 ### .imported.json (ledger)
 
 Each successful import writes one entry to this file in the folder. Re-runs against the same folder *skip* already-imported files unless you tick "Re-import all".
@@ -157,6 +174,7 @@ The detected plugin name appears in the preview header.
 | `.wpimport.json` | Caches form values (NOT the password) so re-opens against this folder pre-fill the form |
 | `.imported.json` | Ledger — which file maps to which post id (skip logic) |
 | `manifest.csv` | (Optional) per-post override sheet you wrote or generated |
+| `categories.json` | (Optional) keyword rules used to auto-assign a category when the manifest cell is empty |
 
 ## Troubleshooting
 

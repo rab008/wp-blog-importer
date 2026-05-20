@@ -27,6 +27,7 @@ USER_AGENT = (
 LEDGER_FILENAME = ".imported.json"
 SETTINGS_FILENAME = ".wpimport.json"
 MANIFEST_FILENAME = "manifest.csv"
+CATEGORIES_FILENAME = "categories.json"
 
 MANIFEST_COLUMNS = [
     "filename",
@@ -422,6 +423,7 @@ def build_parsed_posts(
     ledger: dict | None = None,
 ) -> list[ParsedPost]:
     manifest = load_manifest(folder)
+    rules = load_category_rules(folder)
     files = list_source_files(folder)
     posts: list[ParsedPost] = []
 
@@ -437,6 +439,8 @@ def build_parsed_posts(
         slug = row.get("slug") or slugify(title)
 
         category = row.get("category") or None
+        if not category:
+            category = detect_category(title, body_html, rules)
         tags = [t.strip() for t in (row.get("tags") or "").split(",") if t.strip()]
 
         manifest_date = parse_manifest_date(row.get("post_date", ""), schedule)
@@ -473,6 +477,52 @@ def build_parsed_posts(
 # --------------------------------------------------------------------------- #
 # Category resolution
 # --------------------------------------------------------------------------- #
+
+def load_category_rules(folder: Path) -> dict:
+    """Load per-folder keyword-based category rules.
+
+    Schema:
+      {
+        "default": "Uncategorized",
+        "rules": {
+          "Cooking": ["recipe", "ingredient", "bake"],
+          "Travel":  ["destination", "flight", "hotel"]
+        }
+      }
+    """
+    path = folder / CATEGORIES_FILENAME
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def detect_category(title: str, body_html: str, rules: dict) -> str | None:
+    """Score post text against keyword rules; return the highest-scoring category."""
+    if not rules:
+        return None
+    rule_map = rules.get("rules") or {}
+    default = (rules.get("default") or "").strip() or None
+    if not rule_map:
+        return default
+    plain = re.sub(r"<[^>]+>", " ", body_html).lower()
+    haystack = f"{title.lower()} {plain}"
+    scores: dict[str, int] = {}
+    for category, keywords in rule_map.items():
+        score = 0
+        for kw in keywords or []:
+            k = kw.lower().strip()
+            if not k:
+                continue
+            score += len(re.findall(r"\b" + re.escape(k) + r"\b", haystack))
+        if score > 0:
+            scores[category] = score
+    if not scores:
+        return default
+    return max(scores.items(), key=lambda kv: kv[1])[0]
+
 
 def fetch_categories(site: SiteConfig, session: requests.Session) -> dict[str, int]:
     r = session.get(
